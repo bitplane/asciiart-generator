@@ -1,0 +1,7 @@
+.venv
+*.png
+*.jpg
+*.pth
+*.ansi
+data
+runs
