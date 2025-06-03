@@ -1,0 +1,10 @@
+# Core dependencies
+numpy>=1.24.0
+Pillow>=10.0.0
+fonttools>=4.38.0
+
+# Machine learning (optional for future experiments)
+torch>=2.0.0
+torchvision>=0.15.0
+scikit-learn>=1.3.0
+tensorboard>=2.13.0

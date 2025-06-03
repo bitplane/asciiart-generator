@@ -3,5 +3,4 @@
 *.jpg
 *.pth
 *.ansi
-data
 runs
