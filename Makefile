@@ -28,7 +28,7 @@ dataset:
 	$(SCRIPT) dataset images/input/*.jpg --output $(DATA_DIR)
 
 train:
-	$(SCRIPT) train --data $(DATA_DIR) --output $(MODEL_PATH) --epochs 20
+	$(SCRIPT) train --data $(DATA_DIR) --output $(MODEL_PATH) --epochs 200
 
 convert:
 	$(SCRIPT) convert $(TEST_IMAGE) --model $(MODEL_PATH)

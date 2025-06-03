@@ -1,8 +1,4 @@
 #!/usr/bin/env python3
-"""
-ANSI Canvas V2 - Convert images to ASCII/Unicode art using machine learning
-This version uses proper rendering with character bleed for more accurate evaluation
-"""
 
 import os
 import json
@@ -13,6 +9,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
+import torchvision.transforms as transforms
 from sklearn.model_selection import train_test_split
 from multiprocessing import Pool, cpu_count
 import datetime
@@ -128,28 +125,45 @@ REVERSE = '\033[7m'
 
 
 # ============= Neural Network =============
-class CharacterPredictor(nn.Module):
-    """Simple network that predicts character from features."""
+class ConvASCIINet(nn.Module):
+    """CNN that predicts character from 3x3 patch of character-sized regions."""
     
-    def __init__(self, input_size, num_classes):
+    def __init__(self, char_dims, num_classes):
         super().__init__()
-        self.fc1 = nn.Linear(input_size, 512)
+        char_w, char_h = char_dims
+        
+        # Input: (batch, 1, 3*char_h, 3*char_w) - 3x3 grid of characters
+        self.conv1 = nn.Conv2d(1, 16, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        
+        self.pool = nn.MaxPool2d(2, 2)
+        self.dropout = nn.Dropout(0.25)
+        
+        # Calculate the size after convolutions
+        # After 3 pooling operations: (3*char_h//8) * (3*char_w//8) * 64
+        conv_output_size = (3 * char_h // 8) * (3 * char_w // 8) * 64
+        
+        self.fc1 = nn.Linear(conv_output_size, 512)
         self.fc2 = nn.Linear(512, 256)
         self.fc3 = nn.Linear(256, num_classes)
         self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(0.2)
         
     def forward(self, x):
-        x = self.relu(self.fc1(x))
-        x = self.dropout(x)
-        x = self.relu(self.fc2(x))
-        x = self.dropout(x)
+        # x shape: (batch, 1, 3*char_h, 3*char_w)
+        x = self.pool(self.relu(self.conv1(x)))
+        x = self.pool(self.relu(self.conv2(x)))
+        x = self.pool(self.relu(self.conv3(x)))
+        
+        x = x.view(x.size(0), -1)  # Flatten
+        x = self.dropout(self.relu(self.fc1(x)))
+        x = self.dropout(self.relu(self.fc2(x)))
         x = self.fc3(x)
         return x
 
 
 class ASCIIDataset(Dataset):
-    """Dataset for training ASCII prediction model with rendering."""
+    """Dataset for training ASCII prediction model with pixel patches."""
     
     def __init__(self, samples):
         self.samples = samples
@@ -159,10 +173,10 @@ class ASCIIDataset(Dataset):
     
     def __getitem__(self, idx):
         sample = self.samples[idx]
-        # Return pre-computed features and target
-        features = torch.tensor(sample['features'], dtype=torch.float32)
+        # Return pixel patch and target
+        patch = torch.tensor(sample['patch'], dtype=torch.float32).unsqueeze(0)  # Add channel dim
         target = torch.tensor(sample['best_char_idx'], dtype=torch.long)
-        return features, target
+        return patch, target
 
 
 # ============= Dataset Generation with Rendering =============
@@ -388,6 +402,80 @@ def generate_dataset(image_paths, output_dir="data", font_path=DEFAULT_FONT,
     return char_images, char_dims
 
 
+# ============= Visualization =============
+def create_training_patch_visualization(samples, model, char_dims, chars, idx_to_char, device, num_samples=9):
+    """Create a grid showing feature patches with ground truth vs predicted characters."""
+    
+    # Select random samples
+    import random
+    selected_samples = random.sample(samples, min(num_samples, len(samples)))
+    
+    # Simpler 3x3 grid
+    grid_size = 3
+    cell_size = 120
+    char_render_size = 40
+    
+    viz_img = Image.new('RGB', (grid_size * cell_size, grid_size * cell_size), color=(240, 240, 240))
+    
+    try:
+        font = ImageFont.truetype(DEFAULT_FONT, 14)
+        char_font = ImageFont.truetype(DEFAULT_FONT, 24)
+    except:
+        font = ImageFont.load_default()
+        char_font = ImageFont.load_default()
+    
+    model.eval()
+    with torch.no_grad():
+        for i, sample in enumerate(selected_samples):
+            if i >= 9:  # Safety check
+                break
+                
+            row = i // grid_size
+            col = i % grid_size
+            
+            x_offset = col * cell_size
+            y_offset = row * cell_size
+            
+            # Get model prediction
+            features = torch.tensor(sample['features'], dtype=torch.float32).unsqueeze(0).to(device)
+            outputs = model(features)
+            _, predicted_idx = torch.max(outputs.data, 1)
+            predicted_char = idx_to_char[predicted_idx.item()]
+            ground_truth_char = sample['best_char']
+            
+            # Simple feature visualization - just the first 9 brightness features as a 3x3 grid
+            feature_size = 30
+            for fy in range(3):
+                for fx in range(3):
+                    feat_idx = fy * 3 + fx
+                    if feat_idx < min(9, len(sample['features'])):
+                        brightness = max(0, min(1, sample['features'][feat_idx]))
+                        gray_val = int(brightness * 255)
+                        color = (gray_val, gray_val, gray_val)
+                        
+                        viz_img.paste(Image.new('RGB', (feature_size//3, feature_size//3), color), 
+                                    (x_offset + fx * (feature_size//3), y_offset + fy * (feature_size//3)))
+            
+            # Draw characters below the patch
+            draw = ImageDraw.Draw(viz_img)
+            
+            # Ground truth (green)
+            draw.text((x_offset + 5, y_offset + feature_size + 5), 
+                     f"GT: {ground_truth_char}", font=font, fill=(0, 128, 0))
+            
+            # Prediction (green if correct, red if wrong)
+            color = (0, 128, 0) if predicted_char == ground_truth_char else (128, 0, 0)
+            draw.text((x_offset + 5, y_offset + feature_size + 25), 
+                     f"Pred: {predicted_char}", font=font, fill=color)
+            
+            # Accuracy indicator
+            acc_text = "✓" if predicted_char == ground_truth_char else "✗"
+            draw.text((x_offset + 5, y_offset + feature_size + 45), 
+                     acc_text, font=char_font, fill=color)
+    
+    return viz_img
+
+
 # ============= Training =============
 def train_model(data_dir="data", model_path="model.pth", epochs=50):
     """Train the ASCII prediction model."""
@@ -490,6 +578,17 @@ def train_model(data_dir="data", model_path="model.pth", epochs=50):
         writer.add_scalar('Accuracy/train', train_acc, epoch)
         writer.add_scalar('Accuracy/val', val_acc, epoch)
         writer.add_scalar('Learning Rate', optimizer.param_groups[0]['lr'], epoch)
+        
+        # Log training patch visualization every 5 epochs
+        if (epoch + 1) % 5 == 0:
+            try:
+                viz_img = create_training_patch_visualization(
+                    val_samples, model, char_dims, chars, idx_to_char, device, num_samples=9
+                )
+                viz_tensor = transforms.ToTensor()(viz_img)
+                writer.add_image('Training_Patches', viz_tensor, epoch)
+            except Exception as e:
+                print(f"  Warning: Could not create patch visualization: {e}")
         
         # Save best model
         if val_acc > best_val_acc:
@@ -659,7 +758,7 @@ def main():
     # Training
     train_parser = subparsers.add_parser('train', help='Train the model')
     train_parser.add_argument('--data', default='data', help='Dataset directory')
-    train_parser.add_argument('--epochs', type=int, default=50, help='Training epochs')
+    train_parser.add_argument('--epochs', type=int, default=500, help='Training epochs')
     train_parser.add_argument('--output', default='model.pth', help='Model output path')
     
     # Inference
