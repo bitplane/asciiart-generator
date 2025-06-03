@@ -112,10 +112,72 @@ Where A, B, C, D are overlapping color/pattern groups that create "jigsaw" const
 
 This approach could create novel aesthetics where blocks "understand" their context and fit together like puzzle pieces.
 
+## Quarter-Block Compatibility Graph
+
+The quarter-block idea naturally creates a compatibility graph between characters. 
+
+### Implementation Strategy:
+1. **Group chars by** `(size: int, overlap: bool)`
+2. **Break each char into quarters**
+3. **Develop hash/key metrics** for quarter comparison
+
+### Font Dimension Guidelines:
+- Use "round" numbers only (multiples of 2, ideally powers of 2)
+- Ensures natural stride alignment with features
+- Examples: 8×8, 16×16, 8×16 character cells
+
+### Quarter-Block Evaluation Metrics (Brainstorming):
+
+#### Density Metrics
+- **Ink density**: Percentage of pixels filled in quarter
+- **Edge density**: Pixels on quarter boundaries
+- **Corner density**: Pixels at quarter corners
+
+#### Directional Metrics  
+- **Horizontal flow**: ∑(pixel[x] - pixel[x-1]) 
+- **Vertical flow**: ∑(pixel[y] - pixel[y-1])
+- **Diagonal flow**: NE, NW, SE, SW gradients
+- **Dominant direction**: Strongest flow vector
+
+#### Structural Metrics
+- **Center of mass**: (x̄, ȳ) within quarter
+- **Moment of inertia**: Spread around center
+- **Connectivity**: Number of connected components
+- **Holes**: Number of enclosed empty regions
+
+#### Edge Compatibility Metrics
+- **Edge signature**: Binary pattern of pixels on each edge
+- **Edge continuity score**: How well edges match neighbors
+- **Corner types**: Empty, filled, L-shape, diagonal
+- **Edge gradient**: Smooth vs sharp transitions
+
+#### Frequency/Texture Metrics
+- **DCT coefficients**: 2D frequency components
+- **Local variance**: Texture roughness
+- **Periodicity**: Repeating patterns
+- **Entropy**: Information content
+
+#### Perceptual Hashes
+- **Gradient hash**: Quantized directional gradients
+- **Block hash**: Reduced resolution comparison
+- **Radial hash**: Polar coordinate features
+- **Wavelet hash**: Multi-scale features
+
+### Compatibility Scoring
+```
+compatibility(Q1, Q2, edge) = weighted_sum(
+    edge_match_score,
+    flow_continuity,
+    density_similarity,
+    structural_coherence
+)
+```
+
 ## Next Steps
 
 1. Create a script to systematically test glyph bleeding using PIL
 2. Map which glyphs bleed and in which directions
 3. Test attribute effects on bleeding glyphs
 4. Build a database of glyph properties and relationships
-5. Implement hierarchical block rendering prototype
+5. Implement quarter-block analysis with these metrics
+6. Build compatibility graph between character quarters
