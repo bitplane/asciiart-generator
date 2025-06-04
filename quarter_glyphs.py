@@ -11,6 +11,7 @@ sys.path.append('util')
 from PIL import Image, ImageDraw, ImageFont
 import hashlib
 import json
+import pickle
 from multiprocessing import Pool, cpu_count
 import time
 import numpy as np
@@ -23,7 +24,7 @@ def get_quarter_hash(quarter_array):
     return hashlib.md5(quarter_bytes).hexdigest()
 
 def extract_quarters(img_array):
-    """Extract 4 quarters from an image array and return their hashes."""
+    """Extract 4 quarters from an image array and return their hashes and data."""
     height, width = img_array.shape
     mid_y, mid_x = height // 2, width // 2
     
@@ -34,7 +35,9 @@ def extract_quarters(img_array):
         img_array[mid_y:, mid_x:]       # Bottom-right (h3)
     ]
     
-    return [get_quarter_hash(q) for q in quarters]
+    hashes = [get_quarter_hash(q) for q in quarters]
+    
+    return hashes, quarters
 
 def get_font_glyphs(font_path):
     """Get all character mappings from a font file."""
@@ -98,18 +101,18 @@ def process_font(args):
     # Get all glyphs in this font
     glyphs = get_font_glyphs(font_path)
     if not glyphs:
-        return {}
+        return {}, {}
     
     # Load font once
     try:
         font = ImageFont.truetype(font_path, font_size)
     except Exception:
-        return {}
+        return {}, {}
     
     # Get font metrics once
     space_bbox = font.getbbox(' ')
     if not space_bbox:
-        return {}
+        return {}, {}
     
     cell_width = space_bbox[2] - space_bbox[0]
     ascent, descent = font.getmetrics()
@@ -122,9 +125,10 @@ def process_font(args):
         if (m_bbox[2] - m_bbox[0]) != (i_bbox[2] - i_bbox[0]):
             # Skip proportional fonts for now
             print(f"  Skipping {font_name} (proportional)", flush=True)
-            return {}
+            return {}, {}
     
     results = {}
+    quarter_data = {}
     tested = 0
     found = 0
     
@@ -139,13 +143,20 @@ def process_font(args):
             continue
         
         tested += 1
-        quarter_hashes = test_character_in_font(char, font, cell_width, cell_height, ascent)
+        quarter_result = test_character_in_font(char, font, cell_width, cell_height, ascent)
         
-        if quarter_hashes:
+        if quarter_result:
+            quarter_hashes, quarters = quarter_result
             results[char] = {
                 'font': font_name,
                 'data': quarter_hashes
             }
+            
+            # Store quarter image data by hash
+            for hash_val, quarter_array in zip(quarter_hashes, quarters):
+                if hash_val not in quarter_data:
+                    quarter_data[hash_val] = quarter_array.copy()
+            
             found += 1
         
         # Progress update every 100 chars
@@ -153,7 +164,7 @@ def process_font(args):
             print(f"  {font_name}: tested {tested}/{len(glyphs)}, found {found}", flush=True)
     
     print(f"  {font_name}: DONE - tested {tested}, found {found}", flush=True)
-    return results
+    return results, quarter_data
 
 def main():
     print("Font-Based Glyph Analysis", flush=True)
@@ -190,13 +201,15 @@ def main():
     
     start_time = time.time()
     all_results = {}
+    all_quarter_data = {}
     unique_hashes = set()
     fonts_processed = 0
     
     with Pool(num_cores) as pool:
-        for font_results in pool.imap_unordered(process_font, font_args):
+        for font_results, font_quarter_data in pool.imap_unordered(process_font, font_args):
             fonts_processed += 1
             all_results.update(font_results)
+            all_quarter_data.update(font_quarter_data)
             
             # Count unique hashes
             for char_data in font_results.values():
@@ -207,17 +220,22 @@ def main():
             elapsed = time.time() - start_time
             print(f"\nProgress: {fonts_processed}/{len(monospace_fonts)} fonts, "
                   f"{len(all_results):,} glyphs, "
-                  f"{len(unique_hashes):,} unique quarters", flush=True)
+                  f"{len(all_quarter_data):,} unique quarters", flush=True)
     
     elapsed = time.time() - start_time
     print(f"\nCompleted in {elapsed:.1f} seconds", flush=True)
     
     # Save results
-    output_file = "quarterable_glyphs_by_font.json"
-    print(f"\nSaving results to {output_file}...", flush=True)
+    glyph_file = "glyph_quarters.json"
+    quarter_file = "quarter_data.pkl"
     
-    with open(output_file, 'w', encoding='utf-8') as f:
+    print(f"\nSaving glyph data to {glyph_file}...", flush=True)
+    with open(glyph_file, 'w', encoding='utf-8') as f:
         json.dump(all_results, f, ensure_ascii=False, indent=2)
+    
+    print(f"Saving quarter image data to {quarter_file}...", flush=True)
+    with open(quarter_file, 'wb') as f:
+        pickle.dump(all_quarter_data, f)
     
     print(f"Results saved!", flush=True)
     
@@ -225,7 +243,14 @@ def main():
     print(f"\nStatistics:")
     print(f"  Fonts processed: {len(monospace_fonts)}")
     print(f"  Quarterable glyphs: {len(all_results):,}")
-    print(f"  Unique quarter patterns: {len(unique_hashes):,}")
+    print(f"  Unique quarter patterns: {len(all_quarter_data):,}")
+    
+    # Sample some quarter data info
+    if all_quarter_data:
+        sample_hash = next(iter(all_quarter_data.keys()))
+        sample_quarter = all_quarter_data[sample_hash]
+        print(f"  Quarter image size: {sample_quarter.shape}")
+        print(f"  Quarter data type: {sample_quarter.dtype}")
 
 if __name__ == "__main__":
     main()

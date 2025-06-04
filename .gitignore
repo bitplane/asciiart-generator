@@ -5,3 +5,4 @@
 *.ansi
 runs
 __pycache__
+*.pkl

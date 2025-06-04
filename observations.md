@@ -60,6 +60,30 @@ FreeMono (mono)      10px          10px       None (fits)
 - Monospace fonts constrain characters; proportional fonts allow massive bleeding
 - Bleeding detection must use font resolution to identify actual rendering font
 
+### Performance Discovery: Font Resolution Bottleneck
+**Critical insight**: Unicode fallback resolution is painfully slow, making brute-force scanning of millions of Unicode codepoints infeasible.
+
+**Problem**: Character-by-character font resolution approach:
+- Font resolution lookup per character: ~0.5-2 chars/sec
+- Total Unicode space: 1.1M codepoints  
+- Estimated time: 6-24 days
+
+**Solution**: Font-first approach instead of character-first:
+- Load each font once and extract its character map
+- Process only characters that exist in each font
+- Skip proportional fonts entirely
+- Result: 7,402 quarterable glyphs processed in 5.3 seconds
+
+**Data Efficiency**: 
+- 309,809 unique quarter patterns
+- Total data: 36MB raw, <10MB compressed
+- **No symmetry optimization yet** - could reduce further by detecting rotations/mirrors
+
+**Search Space Collapse**:
+- Theoretical: Millions of Unicode combinations
+- Actual: 310k unique quarter patterns (~96B possible pairs)
+- Manageable size for compatibility analysis
+
 ### Terminal Optimization Discovery
 The terminal appears to detect when:
 ```
