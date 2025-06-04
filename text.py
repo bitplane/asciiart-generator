@@ -22,6 +22,15 @@ def hash_to_color(obj_repr):
     g = int(rgb_hex[2:4], 16) 
     b = int(rgb_hex[4:6], 16)
     
+    # Ensure minimum brightness (at least one component > 128)
+    max_component = max(r, g, b)
+    if max_component < 128:
+        # Scale up to ensure visibility
+        scale_factor = 128 / max_component if max_component > 0 else 2
+        r = min(255, int(r * scale_factor))
+        g = min(255, int(g * scale_factor))
+        b = min(255, int(b * scale_factor))
+    
     # Convert to ANSI 256-color
     r_index = (r * 5) // 255
     g_index = (g * 5) // 255
@@ -88,23 +97,100 @@ def correlation_match(img1, img2, threshold=0.8):
     correlation = np.corrcoef(flat1, flat2)[0, 1]
     return not np.isnan(correlation) and correlation > threshold
 
+def distance_transform_match(img1, img2, threshold=0.8):
+    """Compare using distance transforms."""
+    if img1.shape != img2.shape:
+        return False
+    
+    binary1 = (img1 < 128).astype(np.uint8)
+    binary2 = (img2 < 128).astype(np.uint8)
+    
+    # Simple distance transform - distance from each pixel to nearest edge
+    def simple_distance_transform(binary):
+        h, w = binary.shape
+        dist = np.zeros_like(binary, dtype=float)
+        
+        for y in range(h):
+            for x in range(w):
+                if binary[y, x]:
+                    # Find distance to nearest edge
+                    min_dist = min(x, y, w-x-1, h-y-1)
+                    # Check for internal edges
+                    for dy in range(-1, 2):
+                        for dx in range(-1, 2):
+                            ny, nx = y+dy, x+dx
+                            if 0 <= ny < h and 0 <= nx < w:
+                                if not binary[ny, nx]:
+                                    min_dist = 0
+                                    break
+                    dist[y, x] = min_dist
+        return dist
+    
+    dt1 = simple_distance_transform(binary1)
+    dt2 = simple_distance_transform(binary2)
+    
+    # Normalize
+    if dt1.max() > 0:
+        dt1 = dt1 / dt1.max()
+    if dt2.max() > 0:
+        dt2 = dt2 / dt2.max()
+    
+    # Calculate correlation
+    correlation = np.corrcoef(dt1.flatten(), dt2.flatten())[0, 1]
+    return not np.isnan(correlation) and correlation > threshold
+
+def perceptual_hash_match(img1, img2, threshold=10):
+    """Compare using perceptual hash difference."""
+    if img1.shape != img2.shape:
+        return False
+    
+    def compute_phash(img):
+        # Simple resize to 8x8 using nearest neighbor
+        h, w = img.shape
+        resized = np.zeros((8, 8))
+        
+        for y in range(8):
+            for x in range(8):
+                # Map to original image
+                orig_y = (y * h) // 8
+                orig_x = (x * w) // 8
+                resized[y, x] = img[orig_y, orig_x]
+        
+        # Simple DCT approximation (just use average-based hash)
+        avg = np.mean(resized)
+        hash_bits = resized > avg
+        return hash_bits.flatten()
+    
+    try:
+        hash1 = compute_phash(img1)
+        hash2 = compute_phash(img2)
+        
+        # Calculate Hamming distance
+        hamming_dist = np.sum(hash1 != hash2)
+        return hamming_dist <= threshold
+    except:
+        return False
+
 def evaluate_quarter(quarter_hash, quarter_data, seen_quarters, method='md5'):
-    """Evaluate if we've seen a similar quarter before. Return color or white."""
+    """Evaluate if we've seen a similar quarter before. Return (color, substitute_hash)."""
     current_quarter = quarter_data[quarter_hash]
     
     if method == 'md5':
         # Exact match using hash
         if quarter_hash in seen_quarters:
-            return "\033[37;5m"  # Flashing white
+            # Return the first occurrence we saw
+            return "\033[37;5m", quarter_hash  # Flashing white, use original
         else:
             seen_quarters.add(quarter_hash)
-            return hash_to_color(quarter_hash)
+            return hash_to_color(quarter_hash), quarter_hash
     
     # Fuzzy matching - check against all seen quarters
     match_functions = {
         'hamming': hamming_distance_match,
         'erosion': erosion_dilation_match,
         'correlation': correlation_match,
+        'distance': distance_transform_match,
+        'phash': perceptual_hash_match,
     }
     
     if method not in match_functions:
@@ -115,12 +201,12 @@ def evaluate_quarter(quarter_hash, quarter_data, seen_quarters, method='md5'):
     # Check if current quarter matches any seen quarter
     for seen_hash, seen_quarter in seen_quarters.items():
         if match_func(current_quarter, seen_quarter):
-            # Found a match - return flashing white
-            return "\033[37;5m"
+            # Found a match - return the seen quarter instead
+            return "\033[37;5m", seen_hash  # Flashing white, use substitute
     
-    # No match found - add to seen and return color
+    # No match found - add to seen and return original
     seen_quarters[quarter_hash] = current_quarter
-    return hash_to_color(quarter_hash)
+    return hash_to_color(quarter_hash), quarter_hash
 
 def quarter_to_braille_grid(quarter_array, color_code, threshold=128, scale=4):
     """Convert a quarter image to a grid of colored braille characters."""
@@ -237,15 +323,19 @@ def render_text(text, scale=4, threshold=128, method='md5'):
             # Get quarters and evaluate colors: [TL, TR, BL, BR]
             quarters = []
             colors = []
+            substitute_hashes = []
             for hash_val in quarter_hashes:
                 if hash_val in quarter_data:
-                    quarters.append(quarter_data[hash_val])
-                    colors.append(evaluate_quarter(hash_val, quarter_data, seen_quarters, method))
+                    color, substitute_hash = evaluate_quarter(hash_val, quarter_data, seen_quarters, method)
+                    colors.append(color)
+                    substitute_hashes.append(substitute_hash)
+                    # Use the substitute quarter instead of the original
+                    quarters.append(quarter_data[substitute_hash])
                 else:
                     quarters.append(np.full((32, 16), 255, dtype=np.uint8))  # White quarter
                     colors.append("\033[37m")  # White
             
-            # Convert quarters to colored braille grids
+            # Convert quarters to colored braille grids (using substituted quarters)
             char_braille = [
                 quarter_to_braille_grid(quarters[0], colors[0], threshold, scale),  # TL
                 quarter_to_braille_grid(quarters[1], colors[1], threshold, scale),  # TR
@@ -290,7 +380,7 @@ def main():
     parser.add_argument('--threshold', type=int, default=128, 
                        help='Darkness threshold for braille dots (default: 128)')
     parser.add_argument('--method', default='md5', 
-                       choices=['md5', 'hamming', 'erosion', 'correlation'],
+                       choices=['md5', 'hamming', 'erosion', 'correlation', 'distance', 'phash'],
                        help='Similarity method (default: md5)')
     
     args = parser.parse_args()
