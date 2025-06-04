@@ -176,10 +176,6 @@ def perceptual_hash_match(img1, img2, threshold=10):
     except:
         return False
 
-def exact_pixel_match(img1, img2):
-    """Exact pixel comparison (for reference)."""
-    return np.array_equal(img1, img2)
-
 def test_all_methods():
     """Test all fuzzy comparison methods."""
     print("Loading quarter data...")
@@ -188,12 +184,14 @@ def test_all_methods():
     
     print(f"Loaded {len(quarter_data):,} unique quarter patterns")
     
+    # Create hash lookup for exact matches
+    hash_set = set(quarter_data.keys())
+    
     # Use full dataset
     sample_items = list(quarter_data.items())
     print(f"Testing on full dataset of {len(sample_items)} quarters")
     
     methods = {
-        'exact_pixel': exact_pixel_match,
         'hamming_distance': hamming_distance_match,
         'erosion_dilation': erosion_dilation_match,
         'distance_transform': distance_transform_match,
@@ -206,11 +204,17 @@ def test_all_methods():
         print(f"\nTesting {method_name}...")
         
         start_time = time.time()
+        no_flip = 0
         h_matches = 0
         v_matches = 0
+        hv_matches = 0
         total_tested = 0
         
         for original_hash, quarter_array in sample_items:
+            # Test no flip (identity)
+            if method_func(quarter_array, quarter_array):
+                no_flip += 1
+            
             # Test horizontal flip
             h_flipped = np.fliplr(quarter_array)
             if method_func(quarter_array, h_flipped):
@@ -221,37 +225,89 @@ def test_all_methods():
             if method_func(quarter_array, v_flipped):
                 v_matches += 1
             
+            # Test horizontal + vertical flip
+            hv_flipped = np.flipud(np.fliplr(quarter_array))
+            if method_func(quarter_array, hv_flipped):
+                hv_matches += 1
+            
             total_tested += 1
         
         elapsed = time.time() - start_time
         
         results[method_name] = {
+            'no_flip': no_flip,
             'h_matches': h_matches,
             'v_matches': v_matches,
+            'hv_matches': hv_matches,
             'total_tested': total_tested,
             'time_seconds': elapsed,
             'quarters_per_second': total_tested / elapsed if elapsed > 0 else 0
         }
         
+        print(f"  No-flip: {no_flip}/{total_tested} ({no_flip/total_tested*100:.1f}%)")
         print(f"  H-flip: {h_matches}/{total_tested} ({h_matches/total_tested*100:.1f}%)")
         print(f"  V-flip: {v_matches}/{total_tested} ({v_matches/total_tested*100:.1f}%)")
+        print(f"  H+V-flip: {hv_matches}/{total_tested} ({hv_matches/total_tested*100:.1f}%)")
         print(f"  Time: {elapsed:.2f}s ({total_tested/elapsed:.0f} qtr/sec)")
     
+    # Add exact pixel comparison for reference
+    print(f"\nExact pixel matches (from hash lookup)...")
+    start_time = time.time()
+    exact_no_flip = len(sample_items)  # Always 100%
+    exact_h = 0
+    exact_v = 0
+    exact_hv = 0
+    
+    for original_hash, quarter_array in sample_items:
+        h_flipped = np.fliplr(quarter_array)
+        h_hash = get_quarter_hash(h_flipped)
+        if h_hash in hash_set and h_hash != original_hash:
+            exact_h += 1
+        
+        v_flipped = np.flipud(quarter_array)
+        v_hash = get_quarter_hash(v_flipped)
+        if v_hash in hash_set and v_hash != original_hash:
+            exact_v += 1
+        
+        hv_flipped = np.flipud(np.fliplr(quarter_array))
+        hv_hash = get_quarter_hash(hv_flipped)
+        if hv_hash in hash_set and hv_hash != original_hash:
+            exact_hv += 1
+    
+    elapsed = time.time() - start_time
+    results['exact_pixel'] = {
+        'no_flip': exact_no_flip,
+        'h_matches': exact_h,
+        'v_matches': exact_v,
+        'hv_matches': exact_hv,
+        'total_tested': len(sample_items),
+        'time_seconds': elapsed,
+        'quarters_per_second': len(sample_items) / elapsed
+    }
+    
+    print(f"  No-flip: {exact_no_flip}/{len(sample_items)} (100.0%)")
+    print(f"  H-flip: {exact_h}/{len(sample_items)} ({exact_h/len(sample_items)*100:.1f}%)")
+    print(f"  V-flip: {exact_v}/{len(sample_items)} ({exact_v/len(sample_items)*100:.1f}%)")
+    print(f"  H+V-flip: {exact_hv}/{len(sample_items)} ({exact_hv/len(sample_items)*100:.1f}%)")
+    print(f"  Time: {elapsed:.2f}s ({len(sample_items)/elapsed:.0f} qtr/sec)")
+    
     # Print summary table
-    print("\n" + "="*70)
+    print("\n" + "="*78)
     print("SYMMETRY DETECTION COMPARISON")
-    print("="*70)
-    print(f"{'Method':<18} {'H-Flip':<10} {'V-Flip':<10} {'Time':<8} {'Qtr/sec':<8}")
-    print("-" * 70)
+    print("="*78)
+    print(f"{'Method':<16} {'No-Flip':<8} {'H-Flip':<8} {'V-Flip':<8} {'H+V-Flip':<8} {'Time':<6} {'Qtr/s':<6}")
+    print("-" * 78)
     
     for method_name, data in results.items():
+        no_pct = data['no_flip'] / data['total_tested'] * 100
         h_pct = data['h_matches'] / data['total_tested'] * 100
         v_pct = data['v_matches'] / data['total_tested'] * 100
+        hv_pct = data['hv_matches'] / data['total_tested'] * 100
         
-        print(f"{method_name:<18} {h_pct:5.1f}%     {v_pct:5.1f}%     "
-              f"{data['time_seconds']:5.1f}s   {data['quarters_per_second']:6.0f}")
+        print(f"{method_name:<16} {no_pct:5.1f}%   {h_pct:5.1f}%   {v_pct:5.1f}%   {hv_pct:5.1f}%     "
+              f"{data['time_seconds']:4.1f}s {data['quarters_per_second']:5.0f}")
     
-    print("="*70)
+    print("="*78)
 
 if __name__ == "__main__":
     test_all_methods()

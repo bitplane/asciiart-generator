@@ -51,45 +51,75 @@ def get_font_glyphs(font_path):
     except Exception:
         return []
 
-def test_character_in_font(char, font, cell_width, cell_height, ascent):
-    """Test if a character is quarterable in a specific font."""
-    # Create 3x3 grid image
-    grid_width = cell_width * 3
-    grid_height = cell_height * 3
+def test_character_in_font(char, font_path, font_size, space_width, line_height):
+    """Test if a character is quarterable in a specific font using space-based metrics."""
+    # Render at high resolution for quality, then resize to our target
+    HIGH_RES_SCALE = 4
+    TARGET_WIDTH = 16  # Character width (narrower)
+    TARGET_HEIGHT = 32  # Character height (taller)
+    
+    # Create high-res image based on space metrics
+    hr_width = space_width * HIGH_RES_SCALE
+    hr_height = line_height * HIGH_RES_SCALE
+    
+    # Create 3x3 grid for bleeding test
+    grid_width = hr_width * 3
+    grid_height = hr_height * 3
     
     test_img = Image.new('L', (grid_width, grid_height), color=255)
     draw = ImageDraw.Draw(test_img)
     
-    # Position character in center cell
-    center_x = cell_width
-    center_y = cell_height + ascent
-    
+    # Create high-resolution font 
     try:
-        draw.text((center_x, center_y), char, font=font, fill=0, anchor='ls')
-    except TypeError:
-        adjusted_y = center_y - ascent
-        draw.text((center_x, adjusted_y), char, font=font, fill=0)
+        hr_font = ImageFont.truetype(font_path, font_size * HIGH_RES_SCALE)
     except Exception:
         return None
     
-    # Test for horizontal bleeding
+    # Position character in center cell using proper terminal positioning
+    try:
+        # Get high-res font metrics for proper positioning
+        ascent, descent = hr_font.getmetrics()
+        
+        # Position character properly within the center cell
+        center_x = hr_width  # Left edge of center cell
+        center_y = hr_height + ascent  # Baseline position in center cell
+        
+        # Draw character at high resolution
+        draw.text((center_x, center_y), char, font=hr_font, fill=0, anchor='ls')
+        
+    except Exception:
+        # Fallback positioning if anchor fails
+        try:
+            center_x = hr_width
+            center_y = hr_height
+            draw.text((center_x, center_y), char, font=hr_font, fill=0)
+        except:
+            return None
+    
+    # Test for horizontal bleeding at high resolution
     test_array = np.array(test_img)
     
-    # Check if bleeds horizontally
-    left_pixels = test_array[:, :cell_width]
-    right_pixels = test_array[:, cell_width*2:]
+    # Check if bleeds horizontally out of center cell
+    left_pixels = test_array[:, :hr_width]
+    right_pixels = test_array[:, hr_width*2:]
     
     if np.any(left_pixels < 255) or np.any(right_pixels < 255):
         return None  # Bleeds
     
-    # Extract center cell
-    center_cell = test_array[cell_height:cell_height*2, cell_width:cell_width*2]
+    # Extract center cell at high resolution
+    center_cell_hr = test_array[hr_height:hr_height*2, hr_width:hr_width*2]
     
     # Only process if has content
-    if np.any(center_cell < 255):
-        return extract_quarters(center_cell)
+    if not np.any(center_cell_hr < 255):
+        return None
     
-    return None
+    # Resize to our target dimensions (32×64)
+    center_img = Image.fromarray(center_cell_hr, mode='L')
+    resized_img = center_img.resize((TARGET_WIDTH, TARGET_HEIGHT), Image.LANCZOS)
+    final_array = np.array(resized_img)
+    
+    # Extract quarters from resized image (16×32 each)
+    return extract_quarters(final_array)
 
 def process_font(args):
     """Process all glyphs in a single font."""
@@ -109,14 +139,14 @@ def process_font(args):
     except Exception:
         return {}, {}
     
-    # Get font metrics once
+    # Get space-based font metrics
     space_bbox = font.getbbox(' ')
     if not space_bbox:
         return {}, {}
     
-    cell_width = space_bbox[2] - space_bbox[0]
+    space_width = space_bbox[2] - space_bbox[0]
     ascent, descent = font.getmetrics()
-    cell_height = ascent + descent
+    line_height = ascent + descent
     
     # Test if this is actually monospace by comparing M and i
     m_bbox = font.getbbox('M')
@@ -143,7 +173,7 @@ def process_font(args):
             continue
         
         tested += 1
-        quarter_result = test_character_in_font(char, font, cell_width, cell_height, ascent)
+        quarter_result = test_character_in_font(char, font_path, font_size, space_width, line_height)
         
         if quarter_result:
             quarter_hashes, quarters = quarter_result
