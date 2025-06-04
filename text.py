@@ -8,10 +8,127 @@ import json
 import numpy as np
 import argparse
 
-def quarter_to_braille_grid(quarter_array, threshold=128, scale=4):
-    """Convert a quarter image to a grid of braille characters."""
+def hash_to_color(obj_repr):
+    """Hash an object's repr and return ANSI color code."""
+    import hashlib
+    
+    # Hash the repr
+    hash_obj = hashlib.md5(obj_repr.encode('utf-8'))
+    hex_hash = hash_obj.hexdigest()
+    
+    # Use first 6 chars as RGB hex
+    rgb_hex = hex_hash[:6]
+    r = int(rgb_hex[0:2], 16)
+    g = int(rgb_hex[2:4], 16) 
+    b = int(rgb_hex[4:6], 16)
+    
+    # Convert to ANSI 256-color
+    r_index = (r * 5) // 255
+    g_index = (g * 5) // 255
+    b_index = (b * 5) // 255
+    color_code = 16 + (36 * r_index) + (6 * g_index) + b_index
+    
+    return f"\033[38;5;{color_code}m"
+
+def hamming_distance_match(img1, img2, threshold=0.1):
+    """Compare using Hamming distance with threshold."""
+    if img1.shape != img2.shape:
+        return False
+    binary1 = (img1 < 128).astype(np.uint8)
+    binary2 = (img2 < 128).astype(np.uint8)
+    diff_pixels = np.sum(binary1 != binary2)
+    similarity = 1 - (diff_pixels / img1.size)
+    return similarity > (1 - threshold)
+
+def simple_erosion(binary_img):
+    """Simple erosion: pixel is True only if all neighbors are True."""
+    eroded = np.zeros_like(binary_img)
+    h, w = binary_img.shape
+    for y in range(1, h-1):
+        for x in range(1, w-1):
+            if np.all(binary_img[y-1:y+2, x-1:x+2]):
+                eroded[y, x] = True
+    return eroded
+
+def simple_dilation(binary_img):
+    """Simple dilation: pixel is True if any neighbor is True."""
+    dilated = np.copy(binary_img)
+    h, w = binary_img.shape
+    for y in range(1, h-1):
+        for x in range(1, w-1):
+            if np.any(binary_img[y-1:y+2, x-1:x+2]):
+                dilated[y, x] = True
+    return dilated
+
+def erosion_dilation_match(img1, img2, threshold=0.1):
+    """Compare after erosion/dilation to handle aliasing."""
+    if img1.shape != img2.shape:
+        return False
+    binary1 = (img1 < 128)
+    binary2 = (img2 < 128)
+    
+    eroded1 = simple_erosion(binary1)
+    eroded2 = simple_erosion(binary2)
+    dilated1 = simple_dilation(binary1)
+    dilated2 = simple_dilation(binary2)
+    
+    eroded_diff = np.sum(eroded1 != eroded2) / eroded1.size
+    dilated_diff = np.sum(dilated1 != dilated2) / dilated1.size
+    best_similarity = 1 - min(eroded_diff, dilated_diff)
+    return best_similarity > (1 - threshold)
+
+def correlation_match(img1, img2, threshold=0.8):
+    """Compare using simple correlation."""
+    if img1.shape != img2.shape:
+        return False
+    
+    flat1 = img1.flatten().astype(float)
+    flat2 = img2.flatten().astype(float)
+    
+    correlation = np.corrcoef(flat1, flat2)[0, 1]
+    return not np.isnan(correlation) and correlation > threshold
+
+def evaluate_quarter(quarter_hash, quarter_data, seen_quarters, method='md5'):
+    """Evaluate if we've seen a similar quarter before. Return color or white."""
+    current_quarter = quarter_data[quarter_hash]
+    
+    if method == 'md5':
+        # Exact match using hash
+        if quarter_hash in seen_quarters:
+            return "\033[37;5m"  # Flashing white
+        else:
+            seen_quarters.add(quarter_hash)
+            return hash_to_color(quarter_hash)
+    
+    # Fuzzy matching - check against all seen quarters
+    match_functions = {
+        'hamming': hamming_distance_match,
+        'erosion': erosion_dilation_match,
+        'correlation': correlation_match,
+    }
+    
+    if method not in match_functions:
+        method = 'hamming'  # Default fallback
+    
+    match_func = match_functions[method]
+    
+    # Check if current quarter matches any seen quarter
+    for seen_hash, seen_quarter in seen_quarters.items():
+        if match_func(current_quarter, seen_quarter):
+            # Found a match - return flashing white
+            return "\033[37;5m"
+    
+    # No match found - add to seen and return color
+    seen_quarters[quarter_hash] = current_quarter
+    return hash_to_color(quarter_hash)
+
+def quarter_to_braille_grid(quarter_array, color_code, threshold=128, scale=4):
+    """Convert a quarter image to a grid of colored braille characters."""
     if quarter_array.size == 0:
         return [' ' * scale] * scale
+    
+    # Use provided color code
+    reset_code = "\033[0m"
     
     # Get quarter dimensions
     height, width = quarter_array.shape
@@ -19,7 +136,7 @@ def quarter_to_braille_grid(quarter_array, threshold=128, scale=4):
     # Create a grid of braille characters
     rows = []
     for by in range(scale):
-        row = ""
+        row = color_code  # Start each row with color
         for bx in range(scale):
             # Each braille char represents a 2x4 region within this grid cell
             char_y_start = (by * height) // scale
@@ -34,6 +151,7 @@ def quarter_to_braille_grid(quarter_array, threshold=128, scale=4):
             braille_char = region_to_braille(char_region, threshold)
             row += braille_char
         
+        row += reset_code  # Reset color at end of row
         rows.append(row)
     
     return rows
@@ -88,8 +206,8 @@ def region_to_braille(region, threshold=128):
     braille_char = chr(0x2800 + braille_value)
     return braille_char
 
-def render_text(text, scale=4, threshold=128):
-    """Render text using quarter-based font."""
+def render_text(text, scale=4, threshold=128, method='md5'):
+    """Render text using quarter-based font with line wrapping."""
     # Load data
     try:
         with open('glyph_quarters.json', 'r') as f:
@@ -102,53 +220,67 @@ def render_text(text, scale=4, threshold=128):
         print("Make sure glyph_quarters.json and quarter_data.pkl exist")
         return
     
-    # Process each character
-    char_blocks = []
+    seen_quarters = set() if method == 'md5' else {}
+    total_rows = scale * 2  # Top quarters + bottom quarters
+    output_buffer = [''] * total_rows
+    MAX_WIDTH = 80
     
     for char in text:
         if char not in glyph_data:
             # Use space for unknown characters
             empty_quarter = [' ' * scale] * scale
-            char_blocks.append([empty_quarter, empty_quarter, empty_quarter, empty_quarter])
-            continue
+            char_braille = [empty_quarter, empty_quarter, empty_quarter, empty_quarter]
+        else:
+            char_data = glyph_data[char]
+            quarter_hashes = char_data['data']
+            
+            # Get quarters and evaluate colors: [TL, TR, BL, BR]
+            quarters = []
+            colors = []
+            for hash_val in quarter_hashes:
+                if hash_val in quarter_data:
+                    quarters.append(quarter_data[hash_val])
+                    colors.append(evaluate_quarter(hash_val, quarter_data, seen_quarters, method))
+                else:
+                    quarters.append(np.full((32, 16), 255, dtype=np.uint8))  # White quarter
+                    colors.append("\033[37m")  # White
+            
+            # Convert quarters to colored braille grids
+            char_braille = [
+                quarter_to_braille_grid(quarters[0], colors[0], threshold, scale),  # TL
+                quarter_to_braille_grid(quarters[1], colors[1], threshold, scale),  # TR
+                quarter_to_braille_grid(quarters[2], colors[2], threshold, scale),  # BL
+                quarter_to_braille_grid(quarters[3], colors[3], threshold, scale),  # BR
+            ]
         
-        char_data = glyph_data[char]
-        quarter_hashes = char_data['data']
+        # Check if adding this character would exceed width
+        char_width = scale * 2  # Each char is 2 quarters wide
         
-        # Get quarters: [TL, TR, BL, BR]
-        quarters = []
-        for hash_val in quarter_hashes:
-            if hash_val in quarter_data:
-                quarters.append(quarter_data[hash_val])
-            else:
-                quarters.append(np.full((32, 16), 255, dtype=np.uint8))  # White quarter
+        # Count visible characters (excluding ANSI escape sequences)
+        import re
+        clean_line = re.sub(r'\033\[[0-9;]*m', '', output_buffer[0])
+        visible_width = len(clean_line)
         
-        # Convert quarters to braille grids
-        tl_braille = quarter_to_braille_grid(quarters[0], threshold, scale)  # Top-left
-        tr_braille = quarter_to_braille_grid(quarters[1], threshold, scale)  # Top-right
-        bl_braille = quarter_to_braille_grid(quarters[2], threshold, scale)  # Bottom-left
-        br_braille = quarter_to_braille_grid(quarters[3], threshold, scale)  # Bottom-right
+        if visible_width + char_width > MAX_WIDTH:
+            # Print current buffer and reset
+            for line in output_buffer:
+                print(line + "\033[0m")  # Reset at end of line
+            output_buffer = [''] * total_rows
         
-        char_blocks.append([tl_braille, tr_braille, bl_braille, br_braille])
-    
-    # Combine all characters into output lines
-    total_rows = scale * 2  # Top quarters + bottom quarters
-    output_lines = [''] * total_rows
-    
-    for char_block in char_blocks:
-        tl, tr, bl, br = char_block
+        # Add character to buffer
+        tl, tr, bl, br = char_braille
         
         # Top half (TL + TR side by side)
         for row in range(scale):
-            output_lines[row] += tl[row] + tr[row]
+            output_buffer[row] += tl[row] + tr[row]
         
         # Bottom half (BL + BR side by side)  
         for row in range(scale):
-            output_lines[scale + row] += bl[row] + br[row]
+            output_buffer[scale + row] += bl[row] + br[row]
     
-    # Print result
-    for line in output_lines:
-        print(line)
+    # Print final buffer
+    for line in output_buffer:
+        print(line + "\033[0m")
 
 def main():
     parser = argparse.ArgumentParser(description='Render text using quarter-based braille font')
@@ -157,9 +289,12 @@ def main():
                        help='Size of each quarter in characters (default: 4)')
     parser.add_argument('--threshold', type=int, default=128, 
                        help='Darkness threshold for braille dots (default: 128)')
+    parser.add_argument('--method', default='md5', 
+                       choices=['md5', 'hamming', 'erosion', 'correlation'],
+                       help='Similarity method (default: md5)')
     
     args = parser.parse_args()
-    render_text(args.text, args.scale, args.threshold)
+    render_text(args.text, args.scale, args.threshold, args.method)
 
 if __name__ == "__main__":
     main()
