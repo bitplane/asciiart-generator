@@ -39,7 +39,7 @@ def hash_to_color(obj_repr):
     
     return f"\033[38;5;{color_code}m"
 
-def hamming_distance_match(img1, img2, threshold=0.1):
+def hamming_distance_match(img1, img2, threshold=0.9):
     """Compare using Hamming distance with threshold."""
     if img1.shape != img2.shape:
         return False
@@ -47,7 +47,7 @@ def hamming_distance_match(img1, img2, threshold=0.1):
     binary2 = (img2 < 128).astype(np.uint8)
     diff_pixels = np.sum(binary1 != binary2)
     similarity = 1 - (diff_pixels / img1.size)
-    return similarity > (1 - threshold)
+    return similarity >= threshold
 
 def simple_erosion(binary_img):
     """Simple erosion: pixel is True only if all neighbors are True."""
@@ -69,7 +69,7 @@ def simple_dilation(binary_img):
                 dilated[y, x] = True
     return dilated
 
-def erosion_dilation_match(img1, img2, threshold=0.1):
+def erosion_dilation_match(img1, img2, threshold=0.9):
     """Compare after erosion/dilation to handle aliasing."""
     if img1.shape != img2.shape:
         return False
@@ -84,7 +84,7 @@ def erosion_dilation_match(img1, img2, threshold=0.1):
     eroded_diff = np.sum(eroded1 != eroded2) / eroded1.size
     dilated_diff = np.sum(dilated1 != dilated2) / dilated1.size
     best_similarity = 1 - min(eroded_diff, dilated_diff)
-    return best_similarity > (1 - threshold)
+    return best_similarity >= threshold
 
 def correlation_match(img1, img2, threshold=0.8):
     """Compare using simple correlation."""
@@ -95,51 +95,50 @@ def correlation_match(img1, img2, threshold=0.8):
     flat2 = img2.flatten().astype(float)
     
     correlation = np.corrcoef(flat1, flat2)[0, 1]
-    return not np.isnan(correlation) and correlation > threshold
+    return not np.isnan(correlation) and correlation >= threshold
 
-def distance_transform_match(img1, img2, threshold=0.8):
-    """Compare using distance transforms."""
+def distance_transform_match(img1, img2, threshold=0.9):
+    """Compare using simple distance from edges."""
     if img1.shape != img2.shape:
         return False
     
     binary1 = (img1 < 128).astype(np.uint8)
     binary2 = (img2 < 128).astype(np.uint8)
     
-    # Simple distance transform - distance from each pixel to nearest edge
-    def simple_distance_transform(binary):
+    # Simple edge detection - count neighbors
+    def count_edge_pixels(binary):
         h, w = binary.shape
-        dist = np.zeros_like(binary, dtype=float)
+        edges = np.zeros_like(binary, dtype=float)
         
-        for y in range(h):
-            for x in range(w):
+        for y in range(1, h-1):
+            for x in range(1, w-1):
                 if binary[y, x]:
-                    # Find distance to nearest edge
-                    min_dist = min(x, y, w-x-1, h-y-1)
-                    # Check for internal edges
-                    for dy in range(-1, 2):
-                        for dx in range(-1, 2):
-                            ny, nx = y+dy, x+dx
-                            if 0 <= ny < h and 0 <= nx < w:
-                                if not binary[ny, nx]:
-                                    min_dist = 0
-                                    break
-                    dist[y, x] = min_dist
-        return dist
+                    # Count non-filled neighbors
+                    neighbors = 0
+                    for dy in [-1, 0, 1]:
+                        for dx in [-1, 0, 1]:
+                            if dy == 0 and dx == 0:
+                                continue
+                            if binary[y+dy, x+dx]:
+                                neighbors += 1
+                    # Pixel is edge if it has non-filled neighbors
+                    edges[y, x] = 8 - neighbors
+        return edges
     
-    dt1 = simple_distance_transform(binary1)
-    dt2 = simple_distance_transform(binary2)
+    edges1 = count_edge_pixels(binary1)
+    edges2 = count_edge_pixels(binary2)
     
-    # Normalize
-    if dt1.max() > 0:
-        dt1 = dt1 / dt1.max()
-    if dt2.max() > 0:
-        dt2 = dt2 / dt2.max()
-    
-    # Calculate correlation
-    correlation = np.corrcoef(dt1.flatten(), dt2.flatten())[0, 1]
-    return not np.isnan(correlation) and correlation > threshold
+    # Compare edge patterns
+    if edges1.max() > 0 and edges2.max() > 0:
+        diff = np.abs(edges1 - edges2).sum() / (edges1.sum() + edges2.sum())
+        return (1 - diff) >= threshold
+    elif edges1.max() == 0 and edges2.max() == 0:
+        # Both empty
+        return True
+    else:
+        return False
 
-def perceptual_hash_match(img1, img2, threshold=10):
+def perceptual_hash_match(img1, img2, threshold=0.8):
     """Compare using perceptual hash difference."""
     if img1.shape != img2.shape:
         return False
@@ -165,13 +164,14 @@ def perceptual_hash_match(img1, img2, threshold=10):
         hash1 = compute_phash(img1)
         hash2 = compute_phash(img2)
         
-        # Calculate Hamming distance
+        # Calculate similarity (64 bits total)
         hamming_dist = np.sum(hash1 != hash2)
-        return hamming_dist <= threshold
+        similarity = 1 - (hamming_dist / 64.0)
+        return similarity >= threshold
     except:
         return False
 
-def evaluate_quarter(quarter_hash, quarter_data, seen_quarters, method='md5'):
+def evaluate_quarter(quarter_hash, quarter_data, seen_quarters, method='md5', confidence=None):
     """Evaluate if we've seen a similar quarter before. Return (color, substitute_hash)."""
     current_quarter = quarter_data[quarter_hash]
     
@@ -186,21 +186,21 @@ def evaluate_quarter(quarter_hash, quarter_data, seen_quarters, method='md5'):
     
     # Fuzzy matching - check against all seen quarters
     match_functions = {
-        'hamming': hamming_distance_match,
-        'erosion': erosion_dilation_match,
-        'correlation': correlation_match,
-        'distance': distance_transform_match,
-        'phash': perceptual_hash_match,
+        'hamming': (hamming_distance_match, confidence if confidence is not None else 0.9),
+        'erosion': (erosion_dilation_match, confidence if confidence is not None else 0.9),
+        'correlation': (correlation_match, confidence if confidence is not None else 0.8),
+        'distance': (distance_transform_match, confidence if confidence is not None else 0.9),
+        'phash': (perceptual_hash_match, confidence if confidence is not None else 0.8),
     }
     
     if method not in match_functions:
         method = 'hamming'  # Default fallback
     
-    match_func = match_functions[method]
+    match_func, threshold = match_functions[method]
     
     # Check if current quarter matches any seen quarter
     for seen_hash, seen_quarter in seen_quarters.items():
-        if match_func(current_quarter, seen_quarter):
+        if match_func(current_quarter, seen_quarter, threshold):
             # Found a match - return the seen quarter instead
             return "\033[37;5m", seen_hash  # Flashing white, use substitute
     
@@ -292,8 +292,17 @@ def region_to_braille(region, threshold=128):
     braille_char = chr(0x2800 + braille_value)
     return braille_char
 
-def render_text(text, scale=4, threshold=128, method='md5'):
+def render_text(text, scale=4, threshold=128, method='md5', confidence=None):
     """Render text using quarter-based font with line wrapping."""
+    # Handle 'all' method
+    if method == 'all':
+        methods = ['md5', 'hamming', 'erosion', 'correlation', 'distance', 'phash']
+        for m in methods:
+            print(f"\n{'='*60}")
+            print(f"Method: {m.upper()}")
+            print(f"{'='*60}")
+            render_text(text, scale, threshold, m, confidence)
+        return
     # Load data
     try:
         with open('glyph_quarters.json', 'r') as f:
@@ -326,7 +335,7 @@ def render_text(text, scale=4, threshold=128, method='md5'):
             substitute_hashes = []
             for hash_val in quarter_hashes:
                 if hash_val in quarter_data:
-                    color, substitute_hash = evaluate_quarter(hash_val, quarter_data, seen_quarters, method)
+                    color, substitute_hash = evaluate_quarter(hash_val, quarter_data, seen_quarters, method, confidence)
                     colors.append(color)
                     substitute_hashes.append(substitute_hash)
                     # Use the substitute quarter instead of the original
@@ -375,16 +384,18 @@ def render_text(text, scale=4, threshold=128, method='md5'):
 def main():
     parser = argparse.ArgumentParser(description='Render text using quarter-based braille font')
     parser.add_argument('text', help='Text to render')
-    parser.add_argument('--scale', type=int, default=4, 
-                       help='Size of each quarter in characters (default: 4)')
-    parser.add_argument('--threshold', type=int, default=128, 
-                       help='Darkness threshold for braille dots (default: 128)')
+    parser.add_argument('--scale', type=int, default=3, 
+                       help='Size of each quarter in characters (default: 3)')
+    parser.add_argument('--threshold', type=int, default=180, 
+                       help='Darkness threshold for braille dots (default: 180)')
     parser.add_argument('--method', default='md5', 
-                       choices=['md5', 'hamming', 'erosion', 'correlation', 'distance', 'phash'],
+                       choices=['md5', 'hamming', 'erosion', 'correlation', 'distance', 'phash', 'all'],
                        help='Similarity method (default: md5)')
+    parser.add_argument('--confidence', type=float, default=None,
+                       help='Confidence threshold 0.0-1.0 (default: varies by method)')
     
     args = parser.parse_args()
-    render_text(args.text, args.scale, args.threshold, args.method)
+    render_text(args.text, args.scale, args.threshold, args.method, args.confidence)
 
 if __name__ == "__main__":
     main()

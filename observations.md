@@ -220,11 +220,56 @@ compatibility(Q1, Q2, edge) = weighted_sum(
 )
 ```
 
+## Quarter-Based Font Analysis Implementation
+
+### Key Implementation Details
+
+1. **Space-based character extraction**: Characters are rendered at high resolution (4x scale) then extracted using space character dimensions to preserve terminal positioning. Resized to consistent 32×64 pixels, giving 16×32 pixel quarters.
+
+2. **Quarter extraction with even dimensions**: Fixed the issue where odd character heights created unequal quarter sizes. Now all quarters are exactly 16×32 pixels.
+
+3. **Deduplication visualization**: Created `text.py` that renders text using braille patterns colored by quarter uniqueness:
+   - First occurrence: colored based on MD5 hash
+   - Duplicates: flashing white
+   - Substitution mode: duplicates are replaced with first occurrence to visualize information loss
+
+### Similarity Algorithm Comparison
+
+Tested multiple fuzzy matching algorithms on quarter similarity:
+
+| Algorithm | Speed (qtr/sec) | Quality | Notes |
+|-----------|-----------------|---------|--------|
+| MD5 | N/A | Perfect | Exact pixel match only |
+| Hamming | ~77,000 | Good | Simple pixel difference, surprisingly effective |
+| Erosion/Dilation | ~27,000 | Poor | Too aggressive, many false positives |
+| **Correlation** | ~1,200 | **Best** | Statistical correlation, handles antialiasing well |
+| Distance Transform | ~6,800 | Fair | Edge-based comparison |
+| Perceptual Hash | ~10,000 | Fair | Frequency-based, good for overall shape |
+
+**Winner: Correlation** - Despite being slower, correlation consistently outperforms other methods for identifying visually similar quarters while avoiding false positives. Ideal confidence threshold: 0.8-0.9.
+
+### Key Discoveries
+
+1. **Letter similarities**: 
+   - E and F share top-left quarters (horizontal line)
+   - Q and O share all quarters except Q's tail
+   - Many letters share empty/sparse quarters
+
+2. **Symmetry analysis**: Real fonts have limited perfect symmetry due to:
+   - Pixel grid constraints
+   - Anti-aliasing
+   - Font metrics (ascenders/descenders)
+   - Even dimensions forcing 0.5 pixel offsets
+
+3. **Data efficiency**: 
+   - 8,402 quarterable glyphs
+   - 127,604 unique quarter patterns (vs 309k before proper sizing)
+   - Significant deduplication potential with fuzzy matching
+
 ## Next Steps
 
-1. Create a script to systematically test glyph bleeding using PIL
-2. Map which glyphs bleed and in which directions
-3. Test attribute effects on bleeding glyphs
-4. Build a database of glyph properties and relationships
-5. Implement quarter-block analysis with these metrics
-6. Build compatibility graph between character quarters
+1. Build full compatibility graph using correlation matching
+2. Implement quarter substitution tables for compression
+3. Create pattern library for common quarter combinations
+4. Develop constraint solver for aesthetically coherent rendering
+5. Test quarter-based animation/transitions
