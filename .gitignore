@@ -4,3 +4,4 @@
 *.pth
 *.ansi
 runs
+__pycache__

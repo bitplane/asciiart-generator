@@ -34,14 +34,23 @@ def test_glyph_bleed(font_path, char, font_size=16):
     except:
         return False
     
-    # Get font metrics to determine cell size
-    # Use 'M' as reference for monospace width
-    m_bbox = font.getbbox('M')
-    if not m_bbox:
+    # Use space character to determine actual terminal cell size
+    # In monospace fonts, space char represents the exact cell the terminal uses
+    space_bbox = font.getbbox(' ')
+    if not space_bbox:
         return False
     
-    cell_width = m_bbox[2] - m_bbox[0]
-    cell_height = font_size  # Use font size as height
+    # Get the space character's dimensions and baseline position
+    ascent, descent = font.getmetrics()
+    
+    # Space character width is the cell width
+    cell_width = space_bbox[2] - space_bbox[0]
+    
+    # Cell height is the full line height (what terminal allocates)
+    cell_height = ascent + descent
+    
+    # The baseline position from space character
+    space_baseline_y = space_bbox[1]  # This should be where baseline is positioned
     
     # Create 3x3 grid image
     grid_width = cell_width * 3
@@ -51,19 +60,37 @@ def test_glyph_bleed(font_path, char, font_size=16):
     test_img = Image.new('L', (grid_width, grid_height), color=255)
     draw = ImageDraw.Draw(test_img)
     
-    # Position character in center cell (no offset needed, PIL handles positioning)
+    # Position character in center cell using proper baseline anchoring
     center_x = cell_width
-    center_y = cell_height
-    draw.text((center_x, center_y), char, font=font, fill=0)
+    # Place baseline in center cell with room for ascenders and descenders
+    # Center cell runs from cell_height to 2*cell_height
+    center_y = cell_height + ascent  # Baseline position in center cell
+    try:
+        # Use baseline anchor for proper positioning
+        draw.text((center_x, center_y), char, font=font, fill=0, anchor='ls')
+    except TypeError:
+        # Fallback for older PIL versions without anchor support
+        # Adjust position to simulate baseline anchoring
+        adjusted_y = center_y - ascent
+        draw.text((center_x, adjusted_y), char, font=font, fill=0)
     
-    # Blank out the center cell
+    # Check for horizontal bleeding by blanking out center column and checking left/right
     test_img_blanked = test_img.copy()
     draw_blanked = ImageDraw.Draw(test_img_blanked)
-    draw_blanked.rectangle([cell_width, cell_height, cell_width*2, cell_height*2], fill=255)
     
-    # Check if there are any non-white pixels left (indicating bleeding)
+    # Blank out the center column (where character should be contained)
+    draw_blanked.rectangle([cell_width, 0, cell_width*2, grid_height], fill=255)
+    
+    # Check if there are any non-white pixels left in left or right columns
     test_array = np.array(test_img_blanked)
-    return np.any(test_array < 255)
+    
+    # Check left column (horizontal bleeding to the left)
+    left_bleed = np.any(test_array[:, :cell_width] < 255)
+    
+    # Check right column (horizontal bleeding to the right) 
+    right_bleed = np.any(test_array[:, cell_width*2:] < 255)
+    
+    return left_bleed or right_bleed
 
 def process_font_file(font_file_path, font_size=16):
     """Process a single .1.txt file and classify glyphs as bleeding or not."""
@@ -97,8 +124,8 @@ def process_font_file(font_file_path, font_size=16):
     
     # Generate output filenames
     base_name = os.path.basename(font_file_path).replace('.1.txt', '')
-    bleed_file = f"data/fonts/{base_name}.1.bleed.txt"
-    nobleed_file = f"data/fonts/{base_name}.1.nobleed.txt"
+    bleed_file = f"data/fonts/{base_name}.1-bleed.txt"
+    nobleed_file = f"data/fonts/{base_name}.1-nobleed.txt"
     
     # Save results
     with open(bleed_file, 'w', encoding='utf-8') as f:

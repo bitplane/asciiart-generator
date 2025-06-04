@@ -37,6 +37,29 @@ Result: Shows 3 colors in the middle of the second glyph due to bleeding
 2. **Background color changes**: Do NOT stop bleeding
 3. **Foreground/background swap optimization**: When fg/bg colors are swapped, terminal optimizes to invert, which then stops bleeding
 
+### Font Fallback and Bleeding
+**Critical discovery**: Gnome terminal uses font fallback chains that can fall back to **non-monospace fonts** for characters not available in the primary monospace font.
+
+**Example**: The character `⸺` (U+2E3A, two-em dash):
+- **Primary font**: UbuntuSansMono (monospace) - character not available
+- **Fallback font**: NotoSans-Regular (proportional) - character available
+- **Result**: Character is 7.75x wider than terminal cell (31px vs 4px space width)
+
+**Investigation Results**:
+```
+Font              Cell Width    Char Width    Bleeding
+NotoSans-Regular      4px          31px       7.75x (massive)
+FreeSans              4px          32px       8x (massive)  
+DejaVuSans            5px          10px       2x (moderate)
+FreeMono (mono)      10px          10px       None (fits)
+```
+
+**Implications**:
+- PIL font rendering matches terminal behavior when using correct fallback font
+- Same Unicode character renders completely differently across fonts
+- Monospace fonts constrain characters; proportional fonts allow massive bleeding
+- Bleeding detection must use font resolution to identify actual rendering font
+
 ### Terminal Optimization Discovery
 The terminal appears to detect when:
 ```
