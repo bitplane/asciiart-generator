@@ -6,6 +6,7 @@ Create flipped dataset with (flipx, flipy, md5) keys.
 import pickle
 import numpy as np
 import hashlib
+from util.state import load_state, save_state
 
 
 def hash_array(arr):
@@ -15,9 +16,9 @@ def hash_array(arr):
 
 def main():
     # Load original data
-    print("Loading quarter_data.pkl...")
-    with open('quarter_data.pkl', 'rb') as f:
-        quarter_data = pickle.load(f)
+    print("Loading state data...")
+    state = load_state()
+    quarter_data = state["images"]
     
     print(f"Loaded {len(quarter_data):,} quarters")
     
@@ -49,10 +50,10 @@ def main():
     
     print(f"Created {len(flipped_data):,} total quarters")
     
-    # Save flipped dataset
-    print("Saving quarter_data_flipped.pkl...")
-    with open('quarter_data_flipped.pkl', 'wb') as f:
-        pickle.dump(flipped_data, f)
+    # Save flipped dataset to state
+    print("Saving flipped data to state...")
+    state["images_flipped"] = flipped_data
+    save_state(state)
     
     print("Complete!")
 

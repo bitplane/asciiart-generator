@@ -17,6 +17,7 @@ import time
 import numpy as np
 import glob
 from fontTools.ttLib import TTFont
+from state import load_state, save_state
 
 def get_quarter_hash(quarter_array):
     """Generate a full MD5 hash for a quarter image array."""
@@ -255,19 +256,14 @@ def main():
     elapsed = time.time() - start_time
     print(f"\nCompleted in {elapsed:.1f} seconds", flush=True)
     
-    # Save results
-    glyph_file = "glyph_quarters.json"
-    quarter_file = "quarter_data.pkl"
-    
-    print(f"\nSaving glyph data to {glyph_file}...", flush=True)
-    with open(glyph_file, 'w', encoding='utf-8') as f:
-        json.dump(all_results, f, ensure_ascii=False, indent=2)
-    
-    print(f"Saving quarter image data to {quarter_file}...", flush=True)
-    with open(quarter_file, 'wb') as f:
-        pickle.dump(all_quarter_data, f)
-    
-    print(f"Results saved!", flush=True)
+    # Save results to state
+    print(f"\nSaving state data...", flush=True)
+    state = {
+        "images": all_quarter_data,
+        "glyphs": all_results
+    }
+    save_state(state)
+    print(f"State saved!", flush=True)
     
     # Statistics
     print(f"\nStatistics:")

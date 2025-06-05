@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """Save character quarters as PNG files with systematic naming."""
 
+import os
+import sys
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 import pickle
 import json
 import numpy as np
 from PIL import Image
 import argparse
+from state import load_state
 
 def save_quarter_png(quarter_array, filename):
     """Save quarter as PNG."""
@@ -17,16 +22,9 @@ def save_quarter_png(quarter_array, filename):
 def save_quarters(char, include_flips=False):
     """Save all quarters and optionally flips for a given character."""
     # Load data
-    # Look for glyph_quarters.json in cache directory relative to project root
-    import os
-    glyph_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'cache', 'glyph_quarters.json')
-    with open(glyph_path, 'r') as f:
-        glyph_data = json.load(f)
-    # Look for state.pkl in cache directory relative to project root
-    import os
-    cache_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'cache', 'state.pkl')
-    with open(cache_path, 'rb') as f:
-        quarter_data = pickle.load(f)
+    state = load_state()
+    glyph_data = state["glyphs"]
+    quarter_data = state["images"]
 
     if char not in glyph_data:
         print(f"Character '{char}' not found in glyph data")

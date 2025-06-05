@@ -1,41 +1,21 @@
-# ANSI Canvas Project Makefile
-
 .PHONY: all help venv install glyphs clean distclean
 
-# Default target
-all: glyphs
+all: glyphs ## Default target - build glyph data
 
-# Show available targets
-help:
-	@echo "ANSI Canvas Build System"
-	@echo ""
-	@echo "Available targets:"
-	@echo "  make help      - Show this help message"
-	@echo "  make venv      - Create Python virtual environment"
-	@echo "  make install   - Install dependencies into venv"
-	@echo "  make glyphs    - Generate glyph analysis data"
-	@echo "  make clean     - Remove generated files"
-	@echo "  make distclean - Remove everything including venv"
-	@echo ""
-	@echo "Quick start: make venv install glyphs"
-
-# Create virtual environment
-venv: .venv/bin/activate
+venv: .venv/bin/activate ## Create Python virtual environment
 
 .venv/bin/activate:
 	python3 -m venv .venv
 	@echo "Virtual environment created. Activate with: source .venv/bin/activate"
 
-# Install dependencies
-install: .venv/.install.done
+install: .venv/.install.done ## Install dependencies into venv
 
 .venv/.install.done: .venv/bin/activate scripts/install.sh requirements.txt
 	@echo "Installing dependencies..."
 	@. .venv/bin/activate && ./scripts/install.sh
 	@touch $@
 
-# Generate glyph data
-glyphs: cache/.glyphs.done
+glyphs: cache/.glyphs.done ## Generate glyph analysis data
 
 cache/.glyphs.done: .venv/.install.done scripts/quarter_glyphs.py
 	@mkdir -p cache
@@ -43,10 +23,11 @@ cache/.glyphs.done: .venv/.install.done scripts/quarter_glyphs.py
 	@. .venv/bin/activate && python scripts/quarter_glyphs.py
 	@touch $@
 
-# Clean generated files but keep venv
-clean:
-	rm -rf cache/
+clean: ## Remove generated files but keep venv
+	rm -rf cache/*
 
-# Clean everything including venv
-distclean: clean
+distclean: clean ## Remove everything including venv
 	rm -rf .venv/
+
+help: ## Show this help
+	@egrep -h '\s##\s' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
