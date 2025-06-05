@@ -305,10 +305,15 @@ def render_text(text, scale=4, threshold=128, method='md5', confidence=None):
         return
     # Load data
     try:
-        with open('glyph_quarters.json', 'r') as f:
+        # Look for glyph_quarters.json in cache directory relative to project root
+        glyph_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'cache', 'glyph_quarters.json')
+        with open(glyph_path, 'r') as f:
             glyph_data = json.load(f)
         
-        with open('quarter_data.pkl', 'rb') as f:
+        # Look for state.pkl in cache directory relative to project root
+        import os
+        cache_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'cache', 'state.pkl')
+        with open(cache_path, 'rb') as f:
             quarter_data = pickle.load(f)
     except FileNotFoundError as e:
         print(f"Error: {e}")

@@ -17,9 +17,15 @@ def save_quarter_png(quarter_array, filename):
 def save_quarters(char, include_flips=False):
     """Save all quarters and optionally flips for a given character."""
     # Load data
-    with open('glyph_quarters.json', 'r') as f:
+    # Look for glyph_quarters.json in cache directory relative to project root
+    import os
+    glyph_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'cache', 'glyph_quarters.json')
+    with open(glyph_path, 'r') as f:
         glyph_data = json.load(f)
-    with open('quarter_data.pkl', 'rb') as f:
+    # Look for state.pkl in cache directory relative to project root
+    import os
+    cache_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'cache', 'state.pkl')
+    with open(cache_path, 'rb') as f:
         quarter_data = pickle.load(f)
 
     if char not in glyph_data:
